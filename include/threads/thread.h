@@ -13,9 +13,22 @@
 /* States in a thread's life cycle. */
 enum thread_status {
 	THREAD_RUNNING,     /* Running thread. */
+	// 기동(running)중, 오직 한 스레드가 주어진 시간동안 기동하고 있음
+	// thread_current()는 현재 기동중인 스레드를 반환함
+
 	THREAD_READY,       /* Not running but ready to run. */
+	// 스레드가 기동할 준비가 되었지만 기동하지 않는 상태
+	// 스케줄러에 의해 기동될 수 있음
+	// ready thread는 ready_list라는 이중연결리스트 안에 보관됨
+
 	THREAD_BLOCKED,     /* Waiting for an event to trigger. */
+	// 대기(또는 일시정지)중인 상태(ready와 다름)
+	// 이 스레드는 thread_unblock()으로 상태가 thread_ready로 바뀌기 전에는 스케줄에 할당되지 않음
+	// 원시적 synchronization 방법
+	// blocked thread가 무엇을 기다리고 있는지는 알 수 없음
+
 	THREAD_DYING        /* About to be destroyed. */
+	// 다음 스레드가 오면, 스케줄러에 의해 사라질 스레드라는 것을 나타냄
 };
 
 /* Thread identifier type.
@@ -89,12 +102,19 @@ struct thread {
 	/* Owned by thread.c. */
 	tid_t tid;                          /* Thread identifier. */
 	enum thread_status status;          /* Thread state. */
-	char name[16];                      /* Name (for debugging purposes). */
-	int priority;                       /* Priority. */
-	int64_t wakeup_tick;	//project 1 
+	//스레드의 상태는 thread_running, thread_ready, thread_blocked, thread_dying 중 하나
 
+	char name[16];                      /* Name (for debugging purposes). */
+	int priority;                       /* Priority. 스레드 우선순위(0이 가장 낮은 우선순위) */
+
+	int64_t wakeup_tick;                // alarm clock
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+	// 스레드를 이중연결 리스트에 넣기 위해 사용
+	// 이중연결리스트란, ready_list(run을 위해 ready 중인 스레드의 리스트),
+	// sema_down()에서 세마포어에서 waiting 중인 스레드 리스트를 말함
+	// 세마포어에 있는 스레드는 ready 상태가 될 수 없고, ready 상태인 스레드는 세마포어일 수 없으므로 
+	// 두 리스트에 대해 같은 list_elem을 사용할 수 있음
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -107,7 +127,10 @@ struct thread {
 
 	/* Owned by thread.c. */
 	struct intr_frame tf;               /* Information for switching */
+	// 레지스터 및 스택 포인터를 포함하는 context switching에 대한 정보 저장
+
 	unsigned magic;                     /* Detects stack overflow. */
+	// 스택 오버플로우 탐지 위해 사용하며, 스택 오버플로우가 발생할 시 해당 숫자가 바뀌는 성질을 이용
 };
 
 /* If false (default), use round-robin scheduler.
@@ -115,24 +138,42 @@ struct thread {
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
 
-void thread_init (void);
-void thread_start (void);
+// pintos project - alarm clock
+void thread_sleep(int64_t ticks); //running 상태인 스레드를 sleep으로 만들어줌(block)
+void thread_awake(int64_t ticks); // 깨워야 할 스레드를 awake 
+void update_next_tick_to_awake(int64_t ticks); // 최소 tick을 가진 스레드 저장
+int64_t get_next_tick_to_awake(void); // thread.c의 next_tick_to_awake 반환
 
-void thread_tick (void);
+// pintos project - priority
+void test_max_priority (void);
+bool cmp_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+
+void thread_init (void); // 스레드 시스템 초기화
+void thread_start (void); // idle 스레드 생성, thread_create(), interrupt 활성화
+
+void thread_tick (void); 
 void thread_print_stats (void);
 
-typedef void thread_func (void *aux);
+typedef void thread_func (void *aux); // 스레드로 실행되는 함수의 type, aux는 함수 인자 
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
 
-void thread_block (void);
-void thread_unblock (struct thread *);
+void thread_block (void); 
+//running 상태의 스레드를 blocked 상태로 변경
+//해당 스레드는 호출이 없으면 다시 기동하지 않음
+// low-level 방식의 synchronization
 
-struct thread *thread_current (void);
-tid_t thread_tid (void);
+void thread_unblock (struct thread *); // blocked -> ready 상태로 변경
+
+struct thread *thread_current (void); // running 상태 스레드 반환
+tid_t thread_tid (void); // running 상태 스레드의 tid 반환 (thread_current() -> name과 같음)
 const char *thread_name (void);
 
-void thread_exit (void) NO_RETURN;
-void thread_yield (void);
+void thread_exit (void) NO_RETURN; // 현재 스레드를 나가게 함
+
+void thread_yield (void); 
+// 스레드가 새로운 스레드를 기동할 수 있도록 스케줄러에 CPU 할당
+// 새로운 스레드가 current thread로 바뀜
+// 다만, 스레드를 특정 시간동안만 running 상태에서 벗어나게 하기 위해 해당 함수 쓰면 안 됨
 
 int thread_get_priority (void);
 void thread_set_priority (int);
@@ -143,11 +184,5 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
-
-//project 1
-void thread_sleep(int64_t ticks);
-void thread_awake(int64_t ticks);
-void update_next_tick_to_awake(int64_t ticks);
-int64_t get_next_tick_to_awake(void);
 
 #endif /* threads/thread.h */

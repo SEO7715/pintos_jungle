@@ -103,6 +103,12 @@ struct list {
 #define list_entry(LIST_ELEM, STRUCT, MEMBER)           \
 	((STRUCT *) ((uint8_t *) &(LIST_ELEM)->next     \
 		- offsetof (STRUCT, MEMBER.next)))
+   // struct thread { tid, status, name, priority, list_elem elem, ...} 에서
+   // list_elem 멤버만큼 offset 왼쪽으로 이동하면 struct thread의 포인터 --> 이후 캐스팅
+   //              (struct thread *)                 & LIST_ELEM->next
+   //                |<---         offset()        --->|     
+   // in memory...   V                                 V
+   // sturct thread: || tid | status | ... | elem.prev | elem.next |... ||
 
 void list_init (struct list *);
 
