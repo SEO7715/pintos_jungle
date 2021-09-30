@@ -146,7 +146,7 @@ int64_t get_next_tick_to_awake(void); // thread.c의 next_tick_to_awake 반환
 
 // pintos project - priority
 void test_max_priority (void);
-bool cmp_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+bool cmp_thread_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 
 void thread_init (void); // 스레드 시스템 초기화
 void thread_start (void); // idle 스레드 생성, thread_create(), interrupt 활성화

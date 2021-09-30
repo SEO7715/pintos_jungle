@@ -144,14 +144,20 @@ thread_start (void) {
 	struct semaphore idle_started; 
 	//semaphore 구조체 (멤버 : current value, list waiters(waiting threads 리스트))
 
-	sema_init (&idle_started, 0); // 초기값이 1인데, 0으로 만들어줘서 create 하는동안에 보호해주는것 (0이 되면 임계영역 안에 들어가 있는 상태, 보호된 상태)
+	sema_init (&idle_started, 0); // 초기값 0으로 만들어줘서 create 하는동안에 보호해주는것 
+
 	thread_create ("idle", PRI_MIN, idle, &idle_started); //idle thread 생성
+	// idle() 호출해서, &idle_started를 인자로 넣음
+	// idle()에서 sema_up() 실행해줌 -> 그러고 나서, sema_down이 가능해짐!
 
 	/* Start preemptive thread scheduling. */
 	intr_enable (); //interrupt 활성화 
 
 	/* Wait for the idle thread to initialize idle_thread. */
-	sema_down (&idle_started);
+	sema_down (&idle_started); //sema_init (&idle_started, 0) 으로 보호상태(0인 상태)이기 때문에
+	// idle_started 세마포어가 1이 될때까지 실행되지 않음. 
+	// thread_create()가 실행하면 idle 함수에서 sema_up을 할 때까지!
+
 }
 
 /* Called by the timer interrupt handler at each timer tick.
@@ -244,7 +250,7 @@ thread_create (const char *name, int priority,
 
 	// pintos project - priority
 	// 생성된 스레드 t의 우선순위(t->priority)와 current 스레드의 우선순위(thread_current()-> priority) 비교하여, 
-	// t의 우선순위가 더 클 경우, thread_yield() 호출하여 cpu 양보
+	// t의 우선순위가 더 클 경우, thread_yield() 호출하여 cpu 선점
 	if (t->priority > thread_current()-> priority)
 		thread_yield();
 
@@ -287,7 +293,7 @@ thread_unblock (struct thread *t) {
 	// pintos project - priority
 	// list_push_back (&ready_list, &t->elem); // 해당 스레드를 ready_list 끝에 추가
 	// priority에 따라 정렬하여 ready_list에 삽입
-	list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
+	list_insert_ordered(&ready_list, &t->elem, cmp_thread_priority, NULL);
 
 
 	t->status = THREAD_READY; // 스레드 상태를 ready로 변경
@@ -361,8 +367,8 @@ thread_yield (void) {
 	// pintos project - priority
 	if (curr != idle_thread) //curr가 idle_thread가 아니면, ready_list의 맨 끝에 삽입
 		// list_push_back (&ready_list, &curr->elem); 
-		list_insert_ordered(&ready_list, &curr->elem, cmp_priority, NULL);// 우선순위에 따라 정렬되어 삽입
-		// cmp_priority() : ready_list의 우선순위가 높으면 1, curr->elem의 우선순위가 높으면 0을 반환
+		list_insert_ordered(&ready_list, &curr->elem, cmp_thread_priority, NULL);// 우선순위에 따라 정렬되어 삽입
+		// cmp_thread_priority() : ready_list의 우선순위가 높으면 1, curr->elem의 우선순위가 높으면 0을 반환
 	
 	do_schedule (THREAD_READY); //do_schedule로 스레드 상태를 running에서 ready로 변경
 	intr_set_level (old_level); // 인자로 부여한 level이 interrupt ON 상태이면 intr_enable ()/ interrupt off 상태이면 intr_disable ()
@@ -624,7 +630,7 @@ do_schedule(int status) {
 			list_entry (list_pop_front (&destruction_req), struct thread, elem);
 		palloc_free_page(victim); // victim 페이지 할당 해제
 	}
-	thread_current ()->status = status; //현재 스레드의 상태를 인자로 받은 상태로 갱신
+	thread_current ()->status = status; //현재 스레드의 상태를 인자로 받은 상태(ready)로 갱신
 	schedule ();
 }
 
@@ -758,6 +764,7 @@ get_next_tick_to_awake(void) {
 }
 
 // pintos project - priority
+// running 스레드와, ready_list의 가장 앞의 스레드의 priority 비교
 void
 test_max_priority(void) {
 	struct thread *cp = thread_current(); // 현재 실행중인 스레드
@@ -771,17 +778,17 @@ test_max_priority(void) {
 
 	// 현재 실행중인 스레드의 우선순위가, ready_list의 첫번째 스레드의 우선순위 보다 낮은 우선순위를 가지면
 	// thread_yield()를 통해 cpu 양보
-	if(cp->priority < first_thread -> priority) 
+	if(cp->priority < first_thread -> priority)
 		thread_yield();
 }
 
 // pintos project - priority
 // 스레드 2개를 인자로 받아, 각각의 우선순위를 비교하는 함수
-// list_insert_ordered 함수에 사용됨
+// list_insert_ordered()에 사용됨
 // a의 우선순위가 높으면 1(true), b의 우선순위가 높으면 0(false)을 리턴
 // UNUSED 는, unused error 피하기 위한 설정
 bool
-cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+cmp_thread_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
 	struct thread *thread_a = list_entry(a, struct thread, elem);
 	struct thread *thread_b = list_entry(b, struct thread, elem);
 
