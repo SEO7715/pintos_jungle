@@ -122,7 +122,7 @@ sema_up (struct semaphore *sema) {
 	// waiter 리스트 우선순위 정렬
 	// 점유하고 있던 세마포어 반환
 	if (!list_empty(&sema -> waiters)) {
-		list_sort(&sema->waiters, cmp_thread_priority, NULL); //why..?
+		list_sort(&sema->waiters, cmp_thread_priority, NULL); 
 		thread_unblock(list_entry (list_pop_front (&sema->waiters), struct thread, elem));
 	}
 	
@@ -212,7 +212,12 @@ lock_acquire (struct lock *lock) {
 	struct thread *cur = thread_current();
 	if (lock->holder) { // lock의 holder가 존재할 경우, holder 스레드에게 priority를 넘겨주기
 		cur -> wait_on_lock = lock; // 스레드가 현재 얻기 위해 기다리고 있는 lock은, 현재 lock
-		list_insert_ordered(&lock->holder->donations, &cur->donation_elem, thread_compare_donate_priority, 0);
+		// list_insert_ordered(&lock->holder->donations, &cur->donation_elem, thread_compare_donate_priority, 0);
+		
+		list_push_front (&lock->holder->donations, &cur->donation_elem); 
+		// 우선순위가 더 높은 스레드가 lock_acquire를 한 것이므로 
+		// &lock->holder->donations 내 가장 앞부분에(가장 우선순위가 높은 위치) insert 해주기
+
 		donate_priority();
 	}
 
@@ -369,8 +374,7 @@ cond_wait (struct condition *cond, struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (lock_held_by_current_thread (lock));
 
-	sema_init (&waiter.semaphore, 0); //lock은 lock_init() 할 때, 세마포어를 생성해주나,
-	// cond는 wait할 때 세마포어 생성..? 왜..?
+	sema_init (&waiter.semaphore, 0); 
 	
 	// if(list_empty(&waiter.semaphore.waiters)) {
 	// 	printf("********************************************\n");
@@ -378,11 +382,7 @@ cond_wait (struct condition *cond, struct lock *lock) {
 	
 	// pintos - priority 2
 	list_push_back (&cond->waiters, &waiter.elem);
-	// list_insert_ordered(&cond -> waiters, &waiter.elem, cmp_sem_priority, NULL); 안해도 되지 않나..?
-	// cond가 관리하는 세마포어 wait list에 우선순위 비교해서 넣기
-	// &waiter.elem 는 세마포어 list_elem
-	// cmp_sem_priority()에 인자로 세마포어 list_elem 넣어줌
-	// cmp_sem_priority()에 인자 2개 필요한데.. 한개는 뭐지..?
+	// list_insert_ordered(&cond -> waiters, &waiter.elem, cmp_sem_priority, NULL); 안해도 되지 않나..
 
 	lock_release (lock); // priority_condvar_thread()에서 lock_acquire()를 해줬으므로 release 해주기
 	sema_down (&waiter.semaphore);

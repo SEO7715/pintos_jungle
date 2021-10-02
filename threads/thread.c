@@ -378,7 +378,7 @@ thread_yield (void) {
 // pintos project - priority ver
 // void
 // thread_set_priority (int new_priority) {
-// 	// thread_current ()->priority = new_priority; // new prority 값을 스레드에 적용
+// 	thread_current ()->priority = new_priority; // new prority 값을 스레드에 적용
 	
 // 	// priority가 조정되는 mlfqs가 발생할 경우,
 // 	// 현재 priority 값을 새로 받은 new_priority로 변경하고, 
@@ -725,8 +725,6 @@ thread_sleep (int64_t ticks) {
 		list_push_back(&sleep_list, &this->elem); //push to sleep_list
 		thread_block(); // block 상태로 만들어주기
 		intr_set_level(old_level); //interrupt on
-
-		// intr_enable(); // 이렇게 하면 안되나..?
 	}
 }
 
@@ -736,7 +734,7 @@ thread_sleep (int64_t ticks) {
 // next_tick_to_awake 전역 변수에 저장
 void
 thread_awake (int64_t wakeup_tick) {
-	next_tick_to_awake = INT64_MAX; // next_tick_to_awake 변수 초기화 // 왜 여기있을까..?
+	next_tick_to_awake = INT64_MAX; // next_tick_to_awake 변수 초기화
 
 	struct list_elem *sleeping;
 	sleeping = list_begin(&sleep_list); // sleep_list의 head에 있는 스레드를 sleeping 변수로 설정
@@ -748,7 +746,7 @@ thread_awake (int64_t wakeup_tick) {
 	while(sleeping != list_end(&sleep_list)) 
 	//sleeping list의 마지막 위치에 있는 스레드가 sleeping 변수가 될 때까지
 	{	
-		struct thread *th = list_entry(sleeping, struct thread, elem); //list_entry 를 쓰는 이유..?
+		struct thread *th = list_entry(sleeping, struct thread, elem);
 
 		if (wakeup_tick >= th->wakeup_tick) { //스레드가 일어날 시간이 되었는지 확인
 			sleeping = list_remove(&th -> elem); //스레드 삭제 
