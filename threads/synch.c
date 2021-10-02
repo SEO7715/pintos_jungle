@@ -122,7 +122,7 @@ sema_up (struct semaphore *sema) {
 	// waiter 리스트 우선순위 정렬
 	// 점유하고 있던 세마포어 반환
 	if (!list_empty(&sema -> waiters)) {
-		// list_sort(&sema->waiters, cmp_thread_priority, NULL); //why..?
+		list_sort(&sema->waiters, cmp_thread_priority, NULL); //why..?
 		thread_unblock(list_entry (list_pop_front (&sema->waiters), struct thread, elem));
 	}
 	
@@ -185,6 +185,7 @@ sema_test_helper (void *sema_) {
    acquire and release it.  When these restrictions prove
    onerous, it's a good sign that a semaphore should be used,
    instead of a lock. */
+// Initializes lock as a new lock. The lock is not initially owned by any thread.
 void
 lock_init (struct lock *lock) {
 	ASSERT (lock != NULL);
@@ -207,10 +208,22 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock)); // lock hold한 스레드가 current 스레드가 아닌지 확인
 
-	// lock 내 세마포어 sema_down 해주기
-	// lock holder를 current 스레드로 설정
+	// pintos project - priority donation
+	struct thread *cur = thread_current();
+	if (lock->holder) { // lock의 holder가 존재할 경우, holder 스레드에게 priority를 넘겨주기
+		cur -> wait_on_lock = lock; // 스레드가 현재 얻기 위해 기다리고 있는 lock은, 현재 lock
+		list_insert_ordered(&lock->holder->donations, &cur->donation_elem, thread_compare_donate_priority, 0);
+		donate_priority();
+	}
+
+	// 현재 lock을 소유하고 있는 스레드가 없을 경우, lock hold하기
 	sema_down (&lock->semaphore);
-	lock->holder = thread_current ();
+
+	// pintos project - priority donation
+	cur->wait_on_lock = NULL;
+	lock->holder = cur;
+
+	// lock->holder = thread_current ();
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -243,8 +256,14 @@ lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock)); // lock hold한 스레드가 current 스레드인지 확인
 
+	// pintos project - priority donation
+	remove_with_lock(lock); 
+	// 현재 lock을 사용하기 위해 나에게 priority donate한 스레드들을 donations 리스트에서 제거 
+	refresh_priority(); //priority 재설정
+
 	lock->holder = NULL;
-	sema_up (&lock->semaphore);
+	sema_up (&lock->semaphore); // sema_up하여 lock 점유 반환
+
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -352,16 +371,20 @@ cond_wait (struct condition *cond, struct lock *lock) {
 
 	sema_init (&waiter.semaphore, 0); //lock은 lock_init() 할 때, 세마포어를 생성해주나,
 	// cond는 wait할 때 세마포어 생성..? 왜..?
-
+	
+	// if(list_empty(&waiter.semaphore.waiters)) {
+	// 	printf("********************************************\n");
+	// }; // 생성한 세마포어 내 스레드 여부 확인
+	
 	// pintos - priority 2
-	// list_push_back (&cond->waiters, &waiter.elem);
-	list_insert_ordered(&cond -> waiters, &waiter.elem, cmp_sem_priority, NULL);
+	list_push_back (&cond->waiters, &waiter.elem);
+	// list_insert_ordered(&cond -> waiters, &waiter.elem, cmp_sem_priority, NULL); 안해도 되지 않나..?
 	// cond가 관리하는 세마포어 wait list에 우선순위 비교해서 넣기
 	// &waiter.elem 는 세마포어 list_elem
 	// cmp_sem_priority()에 인자로 세마포어 list_elem 넣어줌
 	// cmp_sem_priority()에 인자 2개 필요한데.. 한개는 뭐지..?
 
-	lock_release (lock); //왜..lock_release를 해주는거지..?
+	lock_release (lock); // priority_condvar_thread()에서 lock_acquire()를 해줬으므로 release 해주기
 	sema_down (&waiter.semaphore);
 	lock_acquire (lock);
 }

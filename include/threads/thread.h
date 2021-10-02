@@ -107,9 +107,18 @@ struct thread {
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. 스레드 우선순위(0이 가장 낮은 우선순위) */
 
-	int64_t wakeup_tick;                // alarm clock
+	int64_t wakeup_tick;                // pintos project - alarm clock
+
+	int init_priority;					// pintos project - priority donation
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+
+// pintos project - priority donation
+	struct lock *wait_on_lock; 			// 스레드가 현재 얻기 위해 기다리고 있는 lock
+	struct list donations; 				// 자신에게 priority를 나눠준 스레드 리스트
+	struct list_elem donation_elem; 	// donations 리스트를 관리하기 위한 element
+
+
 	// 스레드를 이중연결 리스트에 넣기 위해 사용
 	// 이중연결리스트란, ready_list(run을 위해 ready 중인 스레드의 리스트),
 	// sema_down()에서 세마포어에서 waiting 중인 스레드 리스트를 말함
@@ -147,6 +156,12 @@ int64_t get_next_tick_to_awake(void); // thread.c의 next_tick_to_awake 반환
 // pintos project - priority
 void test_max_priority (void);
 bool cmp_thread_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+
+// pintos project - priority donation
+void donate_priority(void);
+void remove_with_lock(struct lock *lock);
+void refresh_priority(void);
+bool thread_compare_donate_priority(const struct list_elem *l, const struct list_elem *s, void *aux UNUSED);
 
 void thread_init (void); // 스레드 시스템 초기화
 void thread_start (void); // idle 스레드 생성, thread_create(), interrupt 활성화

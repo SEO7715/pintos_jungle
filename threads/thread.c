@@ -375,25 +375,35 @@ thread_yield (void) {
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
-// pintos project - priority
+// pintos project - priority ver
+// void
+// thread_set_priority (int new_priority) {
+// 	// thread_current ()->priority = new_priority; // new prority 값을 스레드에 적용
+	
+// 	// priority가 조정되는 mlfqs가 발생할 경우,
+// 	// 현재 priority 값을 새로 받은 new_priority로 변경하고, 
+// 	// 이 때 만약 현재 cpu에서 running 상태인 스레드의 priority가 낮아졌다면
+// 	// ready_list의 스레드와 우선순위를 비교할 수 있도록 test_max_priority() 호출
+// 	if(!thread_mlfqs) { 
+// 		int previous_priority = thread_current() -> priority; //previous_priority = 현재 실행중인 스레드의 우선순위 값
+// 		thread_current() -> priority = new_priority; // thread_current() -> priority 는 new_priority 값으로 갱신
+
+// 		if(thread_current()->priority < previous_priority) // new_priority < previous_priority 이면
+// 		// 현재 실행 중인 스레드의 우선순위 보다, ....new_priority가 더 높은 우선순위를 가지면
+// 			test_max_priority(); // ready_list의 스레드와 우선순위 비교
+	
+// 	}
+// }
+
+// pintos project - priority donation ver
 void
 thread_set_priority (int new_priority) {
-	// thread_current ()->priority = new_priority; // new prority 값을 스레드에 적용
-	
-	// priority가 조정되는 mlfqs가 발생할 경우,
-	// 현재 priority 값을 새로 받은 new_priority로 변경하고, 
-	// 이 때 만약 현재 cpu에서 running 상태인 스레드의 priority가 낮아졌다면
-	// ready_list의 스레드와 우선순위를 비교할 수 있도록 test_max_priority() 호출
-	if(!thread_mlfqs) { 
-		int previous_priority = thread_current() -> priority; //previous_priority = 현재 실행중인 스레드의 우선순위 값
-		thread_current() -> priority = new_priority; // thread_current() -> priority 는 new_priority 값으로 갱신
+	thread_current() -> init_priority = new_priority;
 
-		if(thread_current()->priority < previous_priority) // new_priority < previous_priority 이면
-		// 현재 실행 중인 스레드의 우선순위 보다, ....new_priority가 더 높은 우선순위를 가지면
-			test_max_priority(); // ready_list의 스레드와 우선순위 비교
-	}
-
+	refresh_priority();
+	test_max_priority();
 }
+
 
 /* Returns the current thread's priority. */
 int
@@ -487,6 +497,12 @@ init_thread (struct thread *t, const char *name, int priority) {
 	ASSERT (name != NULL);
 
 	memset (t, 0, sizeof *t);
+
+	// pintos project - priority donation
+	t->init_priority = priority;
+	t->wait_on_lock = NULL;
+	list_init(&t->donations);
+
 	t->status = THREAD_BLOCKED;
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
@@ -798,3 +814,83 @@ cmp_thread_priority(const struct list_elem *a, const struct list_elem *b, void *
 	}
 	return false;
 }
+
+bool
+thread_compare_donate_priority(const struct list_elem *l, const struct list_elem *s, void *aux UNUSED) {
+	struct thread *thread_l = list_entry(l, struct thread, donation_elem);
+	struct thread *thread_s = list_entry(s, struct thread, donation_elem);
+
+	if(thread_l != NULL && thread_s != NULL) {
+		if(thread_l->priority > thread_s->priority) return true;
+		else return false;
+	}
+	return false;
+}
+
+// pintos project - priority donation
+// priority donation 수행하는 함수
+// 현재 스레드가 기다리고 있는 lock과 연결된 모든 스레드를 순회하며
+// 현재 스레드의 우선순위를 lock을 보유하고 있는 스레드에게 donate
+void donate_priority(void) {
+	int depth;
+// depth는 nested의 최대 깊이를 지정해주기 위해 사용(max_depth = 8)
+
+	struct thread *cur = thread_current();
+
+	for(depth=0; depth < 8; depth++) {
+	// 스레드의 wait_on_lock이 NULL이 아니라면, 스레드가 lock에 걸려있다는 의미
+	// lock을 점유하고 있는 holder 스레드에게 priority를 넘겨주는 방식을 깊이 8의 스레드까지 반복
+	// wait_on_lock == NULL이라면, 더이상 donation을 진행할 필요가 없으므로 break
+		if(!cur->wait_on_lock) break;
+			struct thread *holder = cur->wait_on_lock->holder;
+			// 현재 스레드가 기다리는 lock의 holder를 holder로 설정
+			
+			holder->priority = cur->priority;
+			// 현재 스레드의 priority를 holder에게 donate
+			cur = holder;
+			// holder 스레드가 current 스레드가 됨
+	}
+}
+
+// pintos project - priority donation
+// cur->donations 리스트를 순회하면서 리스트에 있는 스레드가 priority를 빌려준 이유
+// 즉, wait_on_lock이 이번에 release하는 lock이라면, 해당 스레드를 리스트에서 삭제
+void 
+remove_with_lock(struct lock *lock) {
+	struct list_elem *e;
+	struct thread *cur = thread_current();
+
+	// donations 리스트 전체를 순회
+	for (e=list_begin(&cur->donations); e!=list_end(&cur->donations); e=list_next(e)) {
+		struct thread *t = list_entry(e, struct thread, donation_elem);
+		// 해당 스레드가 기다리고 있던 lock이 현재 lock이라면(더이상 donate로 받은 priority가 필요없으므로)
+		// donations 리스트에서 해당 스레드 삭제해주기
+		if (t->wait_on_lock == lock)
+			list_remove(&t->donation_elem);
+	}
+}
+
+// pintos project - priority donation
+// 스레드의 priority가 변경되었을 경우, donation을 고려하여 priority 재설정
+// donations 리스트가 빈 경우, init_priority로 설정
+// donations 리스트에 스레드가 있는 경우, 남아있는 스레드 중 가장 높은 priority 가져오기
+// priority가 가장 높은 스레드를 고르기 위해, list_sort()로 내림차순 정렬
+// 그리고, 맨 앞의 스레드(priority가 가장 큰 스레드)를 뽑아서 init_priority와 비교하여 더 큰 priority 적용
+
+void 
+refresh_priority(void) {
+	struct thread *cur = thread_current();
+
+	cur->priority = cur->init_priority; //현재 스레드의 init_priority를 priority 값으로 설정
+
+	// donations 리스트 내 스레드가 있는 경우, 우선순위 재정렬
+	if(!list_empty(&cur->donations)) {
+		list_sort(&cur->donations, thread_compare_donate_priority, 0);
+
+		// donations 리스트 내 우선순위가 가장 높은 스레드(front)의 priority와 현재 스레드의 priority 비교
+		struct thread *front = list_entry(list_front(&cur->donations), struct thread, donation_elem);
+		if (front->priority > cur->priority)
+			cur->priority = front->priority;
+	}
+}
+
