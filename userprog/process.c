@@ -160,33 +160,128 @@ error:
 
 /* Switch the current execution context to the f_name.
  * Returns -1 on fail. */
+// user가 입력한 명령어를 수행할 수 있도록 프로그램을 메모리에 적재하고 실행하는 함수
+// 
+
 int
 process_exec (void *f_name) {
-	char *file_name = f_name;
+	char *file_name = f_name; 
+	//f_name은 문자열이지만 void *로 넘겨받았으므로, 
+	// 문자열로 인식해주기 위해 char *으로 변환해주기
+	char *file_name_copy[48];
+	memcpy(file_name_copy, file_name, strlen(file_name) +1); 
+	// file_name 내 공백을 기준으로 쪼개어주어야 하나, 다른 곳에서 file_name을 사용할 수 있으므로
+	// memcpy를 통해 원본 복사(깊은 복사)로 넘겨주기
+
+	//strlen(file_name) +1 에서  +1은 '\n'을 위한 것
+	// +1 은 char*(8byte)만큼 늘어나는 것을 의미하므로, 한글자 더 읽을 수 있게됨
+
 	bool success;
 
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
-	struct intr_frame _if;
+	
+	// intr_frame은 실행중인 프로세스의 register 정보, stack pointer, instruction counter를 저장하는 자료구조
+	// interrupt나 systemcall 호출시 사용
+	struct intr_frame _if; // intr_frame 내 실행 시 필요한 정보 담기
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
+	// ds : data segment, es : more data segment, ss : stack segment
 	_if.cs = SEL_UCSEG;
+	// cs : code segment
 	_if.eflags = FLAG_IF | FLAG_MBS;
+	// eflags : CPU flags
 
 	/* We first kill the current context */
-	process_cleanup ();
+	process_cleanup (); 
+	// 새로운 실행 파일을 현재 스레드에 담기 전,
+	// 먼저 현재 프로세스에 담긴 context 지워주기(=현재 프로세스에 할당된 page directory 지우기)
+
+	//pintos project2 - parsing
+	// user stack에 인자 담기
+	char *token, *last;
+	int token_count = 0;
+	// 파일명을 제외한 인자의 개수
+
+	char *arg_list[64];
+
+	token = strtok_r(file_name_copy, " ", &last);
+	// strtok_r(문자열, 필터, 컨텍스트) : 필터를 만나기까지의 문자열 리턴
+	// 즉, 여기서는 공백이 나오기 전까지 문자열을 리턴함
+	// 각각의 인자(문자열)에 \0(sentinel)을 붙여서 저장함
+	char *tmp_save = token;
+
+	arg_list[token_count] = token;
+
+	while(token != NULL)
+	{
+		token = strtok_r(NULL, " ", &last); 
+		token_count++;
+		arg_list[token_count] = token;
+	}
 
 	/* And then load the binary */
-	success = load (file_name, &_if);
+	// _if(intr_frame)와 f_name(file_name)을 현재 프로세스에 load
+	// load 성공시, 1 반환하고 실패시, 0 반환
+	success = load(file_name, &_if);
 
 	/* If load failed, quit. */
-	palloc_free_page (file_name);
+	// file_name은 프로그램 파일 이름을 받기 위해 만든 임시 변수이므로, 
+	// load 종료 시 해당 메모리 반환해야함
+	palloc_free_page(file_name);
+
 	if (!success)
 		return -1;
 
+	// load 성공한 경우, argument_stack() 통해 user stack에 인자 저장
+	argument_stack(arg_list, token_count, &_if);
+	
 	/* Start switched process. */
+	// load가 성공적으로 된 경우, context_switching 실시
 	do_iret (&_if);
 	NOT_REACHED ();
+}
+
+void argument_stack(char **argv, int argc, struct intr_frame *if_) {
+	// insert arguments' address
+	char *argu_address[128];
+
+	// user stack의 제일 상단부터 각 배열의 문자열 크기만큼 담아주기(\0은 1byte)
+	for (int i=argc -1; i>=0; i--) {
+		int argv_len = strlen(argv[i]);
+		if_->rsp = if_->rsp - (argv_len + 1);
+		// if_->rsp는 현재 user stack에서 현재 위치를 가리키는 stack pointer
+		// (각 인자에는 sentinel이 포함되어 있기 때문에 (strlen + 1))
+		// 각 인자에서 인자의 크기를 읽고 그 크기만큼 rsp 내려주기
+		memcpy(if_->rsp, argv[i], argv_len + 1);
+		// rsp에 인자 복사하기
+		argu_address[i] = if_->rsp;
+		// 현재 문자열의 시작 위치(주소)를 argu_address에 저장
+	}
+
+	// insert padding for word-align
+	// 64비트 이므로, 8바이트 단위로 끊어주기
+	// rsp가 8의 배수가 될 때까지 rsp의 위치를 내려줌
+	while(if_->rsp % 8 != 0) {
+		if_->rsp--;
+		*(uint8_t *)(if_->rsp) = 0;
+	}
+
+	// insert address of strings including sentinel
+	for (int i=argc; i >= 0; i--) {
+		if_->rsp = if_->rsp - 8;
+		if (i == argc)
+			memset(if_->rsp, 0, sizeof(char **));
+		else
+			memcpy(if_->rsp, &argu_address[i], sizeof(char **));
+	}
+
+	// fake return address
+	if_->rsp = if_->rsp - 8;
+	memset(if_->rsp, 0, sizeof(void *));
+
+	if_->R.rdi = argc;
+	if_->R.rsi = if_->rsp + 8;
 }
 
 

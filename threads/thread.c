@@ -891,4 +891,3 @@ refresh_priority(void) {
 			cur->priority = front->priority;
 	}
 }
-
